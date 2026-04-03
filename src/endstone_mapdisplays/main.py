@@ -736,8 +736,13 @@ class EntryForPlugin(Plugin):
             "usages": ["/listdisplays"],
             "permissions": ["mapdisplays.command.get"],
         },
+        "removedisplay": {
+            "description": "Permanently remove a display and stop it playing",
+            "usages": ["/removedisplay <id: int>"],
+            "permissions": ["mapdisplays.command.admin"],
+        },
         "removevideo": {
-            "description": "Remove a video and its extracted audio from the server",
+            "description": "Delete a video file from the server",
             "usages": ["/removevideo <filename: str>"],
             "permissions": ["mapdisplays.command.admin"],
         },
@@ -987,6 +992,8 @@ class EntryForPlugin(Plugin):
                 return self._cmd_getmaps(sender)
             elif n == "listdisplays":
                 return self._cmd_listdisplays(sender)
+            elif n == "removedisplay":
+                return self._cmd_removedisplay(sender, args)
             elif n == "removevideo":
                 return self._cmd_removevideo(sender, args)
             elif n == "mdsreload":
@@ -1105,15 +1112,36 @@ class EntryForPlugin(Plugin):
             )
         elif mode == "stream":
             if len(args) < 3:
-                player.send_message("§cUsage: /setdisplay <id> stream <url>")
-                return True
-            url = args[2]
-            # Basic URL sanity check
-            if not (url.startswith("http://") or url.startswith("https://") or url.startswith("rtmp://")):
                 player.send_message(
-                    "§cURL must start with http://, https://, or rtmp://"
+                    "§cUsage: /setdisplay <id> stream <url or YouTube video ID>\n"
+                    "§7Example (video ID): §f/setdisplay 0 stream dQw4w9WgXcQ\n"
+                    "§7Example (full URL): §f/setdisplay 0 stream https://youtu.be/dQw4w9WgXcQ"
                 )
                 return True
+
+            # Bedrock's command parser can break URLs at ?, =, & — join all
+            # remaining args back together (no spaces since URLs have none).
+            raw = "".join(args[2:])
+
+            # Expand bare YouTube video IDs (11 alphanumeric chars)
+            import re as _re
+            if _re.fullmatch(r"[A-Za-z0-9_\-]{11}", raw):
+                url = f"https://www.youtube.com/watch?v={raw}"
+                player.send_message(f"§7Expanding video ID to: §f{url}")
+            # Expand youtu.be/<ID> shortlinks (may lose the slash)
+            elif _re.match(r"youtu\.be/[A-Za-z0-9_\-]{11}", raw):
+                vid = raw.split("/")[-1][:11]
+                url = f"https://www.youtube.com/watch?v={vid}"
+                player.send_message(f"§7Expanding shortlink to: §f{url}")
+            elif raw.startswith("http://") or raw.startswith("https://") or raw.startswith("rtmp://"):
+                url = raw
+            else:
+                player.send_message(
+                    "§cCould not parse stream URL.\n"
+                    "§7Use a YouTube video ID (e.g. §fdQw4w9WgXcQ§7) or a full URL starting with §fhttps://"
+                )
+                return True
+
             ss = StreamState(
                 display.width, display.height, self.logger,
                 url, Path(self.data_folder)
@@ -1121,8 +1149,8 @@ class EntryForPlugin(Plugin):
             display.set_state(ss, "stream", url)
             self._save_persistence()
             player.send_message(
-                f"§aDisplay §f#{display_id} §anow streaming: §f{url}\n"
-                f"§7§o(Resolving stream URL via yt-dlp — idle shown until ready.)"
+                f"§aDisplay §f#{display_id} §anow streaming.\n"
+                f"§7§o(Resolving via yt-dlp — idle shown until ready.)"
             )
         else:
             player.send_message(
@@ -1203,6 +1231,37 @@ class EntryForPlugin(Plugin):
             player.send_message(
                 f"  §f#{d.display_id} §7({d.cols}×{d.rows}) — {state_desc}"
             )
+        return True
+
+    def _cmd_removedisplay(self, player: Player, args: list[str]) -> bool:
+        if not args:
+            player.send_message("§cUsage: /removedisplay <id>")
+            return True
+        try:
+            display_id = int(args[0])
+        except ValueError:
+            player.send_message("§cDisplay ID must be an integer.")
+            return True
+
+        display = self.displays.get(display_id)
+        if display is None:
+            player.send_message(f"§cNo display with ID {display_id}.")
+            return True
+
+        # Stop the active state (kills the decode thread)
+        try:
+            display.state.stop()
+        except Exception:
+            pass
+
+        # Remove from active displays and persist
+        del self.displays[display_id]
+        self._save_persistence()
+
+        player.send_message(
+            f"§aDisplay §f#{display_id} §ahas been removed. "
+            f"§7The map item frames can now be broken safely."
+        )
         return True
 
     def _cmd_removevideo(self, player: Player, args: list[str]) -> bool:
