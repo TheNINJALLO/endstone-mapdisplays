@@ -550,6 +550,7 @@ class MapDisplay:
         display_id: int,
         cols: int,
         rows: int,
+        creator_name: str = "",
     ) -> None:
         self.plugin = plugin
         self.display_id = display_id
@@ -557,6 +558,7 @@ class MapDisplay:
         self.rows = rows
         self.width = cols * 128
         self.height = rows * 128
+        self.creator_name = creator_name  # player who ran /getdisplay
 
         self._state_lock = threading.Lock()
         self._state: DisplayState = IdleState(
@@ -684,6 +686,7 @@ class MapDisplay:
             "rows": self.rows,
             "state_name": self._state_name,
             "state_arg": self._state_arg,
+            "creator_name": self.creator_name,
         }
 
 
@@ -737,9 +740,9 @@ class EntryForPlugin(Plugin):
             "usages": ["/removevideo <filename: str>"],
             "permissions": ["mapdisplays.command.admin"],
         },
-        "reloadconfig": {
-            "description": "Reload config.json without restarting the plugin",
-            "usages": ["/reloadconfig"],
+        "mdsreload": {
+            "description": "Reload mapdisplays config.json without restarting",
+            "usages": ["/mdsreload"],
             "permissions": ["mapdisplays.command.admin"],
         },
     }
@@ -917,13 +920,14 @@ class EntryForPlugin(Plugin):
             self.logger.error(f"[MapDisplays] Failed to load displays.json: {exc}")
 
     def _restore_display(self, entry: dict) -> MapDisplay | None:
-        """Re-create a MapDisplay from a saved entry (maps get new IDs — players use /getmaps)."""
+        """Re-create a MapDisplay from a saved entry (maps get new IDs — auto-given on join)."""
         try:
             display = MapDisplay(
                 self,
                 entry["id"],
                 entry["cols"],
                 entry["rows"],
+                creator_name=entry.get("creator_name", ""),
             )
 
             state_name = entry.get("state_name", "idle")
@@ -971,10 +975,19 @@ class EntryForPlugin(Plugin):
 
     async def _update_loop(self) -> None:
         """Frame push loop driven by display_fps from config. Runs on the Endstone async executor."""
+        _heartbeat_ticks = 0
         while self._running:
             fps = float(self._config.get("display_fps", 10))
             fps = max(1.0, min(fps, 20.0))  # clamp 1–20 fps
             sleep_interval = 1.0 / fps
+            _heartbeat_ticks += 1
+
+            # Every ~30 seconds force-re-send all map data to all players.
+            # This recovers maps that went blank after chunk unloads.
+            if _heartbeat_ticks >= int(fps * 30):
+                _heartbeat_ticks = 0
+                self._heartbeat_resend()
+
             for display in list(self.displays.values()):
                 try:
                     display.update()
@@ -984,15 +997,35 @@ class EntryForPlugin(Plugin):
                     )
             await aio.sleep(sleep_interval)
 
+    def _heartbeat_resend(self) -> None:
+        """
+        Force-push every display's current frame to all online players.
+        Runs every 30 s to recover maps that went blank after chunk unloads.
+        """
+        def _do_resend(plg=self):
+            for display in list(plg.displays.values()):
+                try:
+                    for _, view in display._tiles:
+                        for player in plg.server.online_players:
+                            try:
+                                player.send_map(view)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+        # Must run on main thread
+        self.server.scheduler.run_task(self, _do_resend)
+
     # ── Events ───────────────────────────────────────────────────────────────
 
     @event_handler
     def on_player_join(self, event: PlayerJoinEvent) -> None:
-        """Send current map frames and restart any playing sound for the joining player."""
+        """Send current map frames, restart sound, and auto-give fresh maps to display creators."""
         player = event.player
 
         def _welcome():
             try:
+                # Re-send current frame for every display
                 for display in self.displays.values():
                     display.send_all_maps_to(player)
                     sound = display.state.sound_name
@@ -1001,6 +1034,24 @@ class EntryForPlugin(Plugin):
                             player.play_sound(player.location, sound, 1.0, 1.0)
                         except Exception:
                             pass
+
+                # Auto-give fresh map items to display creators after a restart.
+                # Map IDs change every restart (Endstone API limitation), so creators
+                # need new items. Their old item frames will need to be updated manually,
+                # but at least they don't have to run /getmaps.
+                creator_displays = [
+                    d for d in self.displays.values()
+                    if d.creator_name == player.name
+                ]
+                if creator_displays:
+                    player.send_message(
+                        f"§e[MapDisplays] §7You created §f{len(creator_displays)} §7display(s). "
+                        f"Fresh map items have been added to your inventory — "
+                        f"replace the maps in your item frames to restore them after the restart."
+                    )
+                    for display in creator_displays:
+                        display.give_maps_to(player)
+
             except Exception as exc:
                 self.logger.warning(f"[MapDisplays] Join handler error for {player.name}: {exc}")
 
@@ -1029,7 +1080,7 @@ class EntryForPlugin(Plugin):
                 return self._cmd_listdisplays(sender)
             elif n == "removevideo":
                 return self._cmd_removevideo(sender, args)
-            elif n == "reloadconfig":
+            elif n == "mdsreload":
                 return self._cmd_reloadconfig(sender)
         except Exception as exc:
             self.logger.error(f"[MapDisplays] Command '{command.name}' error: {exc}")
@@ -1051,7 +1102,7 @@ class EntryForPlugin(Plugin):
 
         display_id = self._next_id
         self._next_id += 1
-        display = MapDisplay(self, display_id, cols, rows)
+        display = MapDisplay(self, display_id, cols, rows, creator_name=player.name)
         self.displays[display_id] = display
         display.give_maps_to(player)
         self._save_persistence()
@@ -1333,6 +1384,20 @@ class EntryForPlugin(Plugin):
     # ── Sound helpers ────────────────────────────────────────────────────────
 
 
+    def _get_ffmpeg_path(self) -> str | None:
+        """
+        Resolve the FFmpeg executable path.
+        Priority:
+        1. imageio-ffmpeg bundled binary (installed automatically via pip)
+        2. System PATH (fallback for servers with FFmpeg manually installed)
+        """
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+        return shutil.which("ffmpeg")
+
     def _get_existing_sound(self, filename: str) -> str | None:
         """Return sound event name if the OGG already exists in the resource pack."""
         stem = Path(filename).stem
@@ -1357,11 +1422,11 @@ class EntryForPlugin(Plugin):
         if ogg_path.exists():
             return event_name  # Already prepared from a previous load
 
-        ffmpeg = shutil.which("ffmpeg")
+        ffmpeg = self._get_ffmpeg_path()
         if not ffmpeg:
             self.logger.warning(
-                "[MapDisplays] FFmpeg not found on PATH — sound disabled for this video.\n"
-                "[MapDisplays] Install FFmpeg (https://ffmpeg.org) and reload the plugin."
+                "[MapDisplays] FFmpeg not found — sound disabled for this video. "
+                "Re-install the plugin (imageio-ffmpeg should bundle FFmpeg automatically)."
             )
             return None
 

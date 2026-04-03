@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-mapdisplays"
-version = "0.2.2"
+version = "0.2.3"
 description = "Server-local video & image display system for Endstone (map-based)"
 authors = [
     { name = "niko-at-chalupa" }
@@ -14,6 +14,7 @@ dependencies = [
     "av",
     "Pillow",
     "yt-dlp",
+    "imageio-ffmpeg",
 ]
 
 [project.entry-points."endstone"]
