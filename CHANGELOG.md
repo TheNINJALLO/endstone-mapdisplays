@@ -4,6 +4,47 @@ All notable changes to `endstone-mapdisplays` will be documented here.
 
 ---
 
+## [0.2.2] — 2026-04-03
+
+### Fixed
+
+#### Event Handler Registration Error
+- Removed `from __future__ import annotations` from the top of `main.py`.
+  This import makes **all** type annotations lazy strings at runtime (PEP 563),
+  which broke Endstone's `register_events()` introspection — it saw
+  `'PlayerJoinEvent'` (a string) instead of the actual class and refused to
+  register the handler, logging:
+  > `Plugin attempted to register an invalid event handler signature: on_player_join`
+  Python 3.11 supports `X | None` union syntax natively so the import is not needed.
+
+### Performance
+
+Three root causes of server lag when playing videos were fixed:
+
+#### 1. Batched `send_map` calls (largest impact)
+- **Before:** One `scheduler.run_task` call was scheduled **per tile per frame**.
+  A 2×2 display at 20 fps = **80 scheduler interrupts/sec** on the main thread.
+- **After:** All updated tile views are collected, then a **single** `run_task` fires
+  per display per frame sending every tile at once. At 10 fps = **10 calls/sec** (8× less).
+- Also returns immediately from `update()` if no tile frames have changed (e.g. static images
+  no longer generate any scheduler calls at all between state changes).
+
+#### 2. Video decode capped to 10 fps
+- `VideoFileState` and `IdleState` previously decoded at the video's **native fps** (e.g. 24–30 fps).
+  128×128 px map tiles have no meaningful quality gain above 10 fps.
+- Both now cap to `_MAX_FPS = 10.0` and use **frame-skip** (`i % skip`) so PyAV still
+  reads the file sequentially but only processes and stores every Nth frame.
+  Resize and lock overhead reduced by ~2–3×.
+
+#### 3. Update loop driven by `display_fps` config
+- The `_update_loop` coroutine was hardcoded to `sleep(0.05)` (20 fps) even though
+  `config.json` already had a `display_fps` field — it was completely ignored.
+- Now reads `display_fps` from config on every iteration (clamped 1–20 fps).
+- Default `display_fps` lowered from `20` to `10` in `_DEFAULT_CONFIG`.
+- Tunable live: edit `plugins/mapdisplays/config.json` and run `/reloadconfig`.
+
+---
+
 ## [0.2.1] — 2026-04-03
 
 ### Added

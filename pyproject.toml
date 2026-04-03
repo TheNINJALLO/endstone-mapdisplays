@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "endstone-mapdisplays"
-version = "0.2.1"
+version = "0.2.2"
 description = "Server-local video & image display system for Endstone (map-based)"
 authors = [
     { name = "niko-at-chalupa" }
