@@ -975,19 +975,10 @@ class EntryForPlugin(Plugin):
 
     async def _update_loop(self) -> None:
         """Frame push loop driven by display_fps from config. Runs on the Endstone async executor."""
-        _heartbeat_ticks = 0
         while self._running:
             fps = float(self._config.get("display_fps", 10))
             fps = max(1.0, min(fps, 20.0))  # clamp 1–20 fps
             sleep_interval = 1.0 / fps
-            _heartbeat_ticks += 1
-
-            # Every ~30 seconds force-re-send all map data to all players.
-            # This recovers maps that went blank after chunk unloads.
-            if _heartbeat_ticks >= int(fps * 30):
-                _heartbeat_ticks = 0
-                self._heartbeat_resend()
-
             for display in list(self.displays.values()):
                 try:
                     display.update()
@@ -996,25 +987,6 @@ class EntryForPlugin(Plugin):
                         f"[MapDisplays] Display #{display.display_id} update error: {exc}"
                     )
             await aio.sleep(sleep_interval)
-
-    def _heartbeat_resend(self) -> None:
-        """
-        Force-push every display's current frame to all online players.
-        Runs every 30 s to recover maps that went blank after chunk unloads.
-        """
-        def _do_resend(plg=self):
-            for display in list(plg.displays.values()):
-                try:
-                    for _, view in display._tiles:
-                        for player in plg.server.online_players:
-                            try:
-                                player.send_map(view)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-        # Must run on main thread
-        self.server.scheduler.run_task(self, _do_resend)
 
     # ── Events ───────────────────────────────────────────────────────────────
 
