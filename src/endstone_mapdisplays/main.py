@@ -62,9 +62,15 @@ _DEFAULT_CONFIG: dict = {
     # Leave empty ("") to disable auto resource pack registration.
     "world_folder": "worlds/Bedrock level",
 
-    # Target frame rate for pushing map updates (frames per second).
-    # Maps don't need high fps — 8-10 looks smooth and is much lighter on the server.
+    # How often to decode/advance video frames (frames per second).
+    # Affects audio sync timing. Higher = smoother but more CPU.
     "display_fps": 10,
+
+    # How often to actually SEND map packets to players (frames per second).
+    # This directly controls main-thread scheduler load.
+    # 4 fps is visually indistinguishable on 128px maps and is much lighter.
+    # Lower this first if you see server lag (try 2 or 3).
+    "send_fps": 4,
 }
 
 
@@ -559,6 +565,7 @@ class MapDisplay:
         self.width = cols * 128
         self.height = rows * 128
         self.creator_name = creator_name  # player who ran /getdisplay
+        self._last_send_time: float = 0.0  # throttle main-thread send_map calls
 
         self._state_lock = threading.Lock()
         self._state: DisplayState = IdleState(
@@ -624,16 +631,22 @@ class MapDisplay:
 
     def update(self) -> None:
         """
-        Pull the current frame from the active state and push it to every tile.
-        Batches ALL tile sends into a SINGLE run_task call per display — sending
-        one task per tile per frame would flood the main thread scheduler.
+        Pull the current frame from the active state and push to tiles.
+
+        Decoupled rates:
+        - Decode/canvas update: runs at display_fps (for audio timing accuracy)
+        - Packet send (run_task): gated by send_fps (default 4fps)
+
+        This prevents the main game thread from being flooded with send_map
+        calls, which delays commands, forms, and game ticks.
         """
         with self._state_lock:
             state = self._state
 
         full_frame, frame_id = state.get_full_frame()
 
-        # Collect views that actually have a new frame
+        # Always update in-memory canvas so the renderer stays current,
+        # but collect which views have a genuinely new frame.
         updated_views = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -643,9 +656,18 @@ class MapDisplay:
                     updated_views.append(view)
 
         if not updated_views:
-            return  # nothing changed — skip the scheduler call entirely
+            return  # frame unchanged — no work needed
 
-        # One single run_task per display per frame — send ALL updated tiles at once
+        # Rate-limit packet sends to send_fps (independent of decode/canvas rate).
+        # This is the primary control for main-thread scheduler pressure.
+        send_fps = float(self.plugin._config.get("send_fps", 4))
+        send_fps = max(1.0, min(send_fps, 20.0))
+        now = time.monotonic()
+        if now - self._last_send_time < 1.0 / send_fps:
+            return  # too soon — canvas updated but skip this packet burst
+        self._last_send_time = now
+
+        # One single run_task per display — sends ALL updated tiles together.
         def _send_batch(views=updated_views, plg=self.plugin):
             for player in plg.server.online_players:
                 for v in views:
