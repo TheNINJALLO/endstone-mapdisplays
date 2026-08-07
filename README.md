@@ -1,46 +1,91 @@
-# MapDisplays
+# MapDisplays — Announcements Edition
 
-> [!IMPORTANT]
-> This is INCOMPLETE!!!! Videos are laggy, and such...
+An Endstone plugin that renders static images across one or more item-frame maps.
+Use it for server announcements, spawn boards, montly banners — anything you can push as an image.
 
-> [!WARNING]
-> Run this locally, and on Linux!!! Windows support is a no for now.
+---
 
-> [!CAUTION]
-> This is **NOT** meant to be used in a production server, or any real server, in fact. This is just a cool thing I made that I'd like to show off.
->
+## Commands
 
-> [!NOTE]
-> Sending images for maps 20 times a second *(per display cabinet, and per player too!)* *(which is what we're doing)* is *WAY* too much bandwidth for this to be ran over the internet.
+All management is done through the `/display` command.
 
-> [!NOTE]
-> If you have issues, open an issue! I don't have much insight on how good or bad this is.
+### `/display create <name> <cols> <rows>`
+Creates a new named display board and gives you the physical map items.
+- `name` — a unique identifier for this display (e.g. `announcements`, `spawnboard`)
+- `cols` — number of maps wide
+- `rows` — number of maps tall
 
-> [!IMPORTANT]
-> This plugin *MIGHT* actually become viable for use in production in the future.
+Place the maps into item frames on your wall from **top-left → top-right, then next row**.
 
-> [!CAUTION]
-> While a MapDisplay is showing any YouTube video, it might lag out the server to the point where you can no longer break or place blocks. This heavily depends on what kind of video you're playing, though.
+**Example:** `/display create spawnboard 3 2` → gives you 6 maps for a 3-wide × 2-tall grid.
 
-> [!NOTE]
-> Remember that this plugin isn't my best work.
+---
 
-> [!IMPORTANT]
-> You must build this plugin yourself.
+### `/display set <name> <source>`
+Loads an image onto an existing display. Works in two ways:
 
-> [!NOTE]
-> PLEASE, somebody PLEASE provide better docs through a pull request.
+#### From a URL
+```
+/display set announcements https://i.imgur.com/abc123.png
+```
+Any direct image link works (Imgur, Discord CDN, your own web host, etc.)
 
-> [!IMPORTANT]
-> I think instead of this being an actual plugin, I think it's more of a showcase of what Endstone can do.
+#### From a local file
+```
+/display set announcements announcement_april.png
+```
+Upload the file to your server at:
+```
+/home/container/plugins/endstone-mapdisplays/
+```
+Then use just the filename as the `source`.
 
-An Endstone plugin that lets you make MapDisplays!!!
+---
 
-MapDisplays are little displays that show what you want *(usually a youtube video)*
+### `/display give <name> [player]`
+Gives the map items for an existing display to yourself or another player.
+Use this to hand out the `announcements` map to new players, or replace lost maps.
 
+**Examples:**
+```
+/display give announcements
+/display give announcements Steve
+```
 
-<img src="readme_resources/mapdisplays_idle.gif" />
-<br />
+---
 
+## Folder Structure (on the server)
 
-Inspired by the Java mod, WebDisplays.
+```
+plugins/endstone-mapdisplays/
+├── announcement_april.png   ← upload your local images here
+├── spawn_banner.jpg
+└── data/
+    └── displays.json        ← auto-generated, do not edit manually
+```
+
+---
+
+## Typical Workflows
+
+### Monthly Announcement Map
+1. `/display create announcements 1 1`
+2. Hand the map to players (or distribute via kit plugin)
+3. Each month, upload your new image to the plugin folder and run:
+   `/display set announcements april_news.png`
+   — or paste a direct URL instead —
+   `/display set announcements https://yourhost.com/april.png`
+
+### Large Spawn Board (e.g. 3×2 item frames)
+1. Build your item frame grid on the wall
+2. `/display create spawnboard 3 2` — you get 6 maps
+3. Place maps into frames top-left → bottom-right
+4. `/display set spawnboard https://link.to/banner.png`
+
+---
+
+## Notes
+- Images are automatically scaled to fit the display dimensions
+- Displays persist across server restarts via `displays.json`
+- The image is re-applied on every server startup from the last `source`
+- Both `.png` and `.jpg` formats are supported
