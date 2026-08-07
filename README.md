@@ -20,8 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> &bull;
-  <a href="#compatibility">Compatibility</a> &bull;
+  <a href="#what-it-does">What it does</a> &bull;
+  <a href="#how-to-use">How to use</a> &bull;
+  <a href="#commands-and-permissions">Commands</a> &bull;
   <a href="#install">Install</a> &bull;
   <a href="https://github.com/TheNINJALLO/endstone-mapdisplays/releases">Releases</a>
 </p>
@@ -30,9 +31,24 @@
 
 (Kind of) like WebDisplays. This release is aligned with Endstone 0.11.8 and Minecraft Bedrock Dedicated Server 1.26.40, and is distributed as a Python wheel for direct installation in an Endstone server.
 
-## Capabilities
+## What it does
 
--
+- Creates single- or multi-map image displays from local files and remote image URLs.
+- Slices images across configured rows and columns and gives the resulting maps to players.
+- Persists named displays and can broadcast updated map data to online clients.
+
+## How to use
+
+1. Create a display grid with `/display create <name> <cols> <rows>`.
+2. Load an image with `/display set <name> <URL-or-local-path>`.
+3. Give its maps with `/display give <name>` and place them in item frames in numerical order.
+4. Use `/display broadcast <name>` after changing an image that current players should refresh.
+
+## Commands and permissions
+
+| Command / usage | What it does | Access |
+|---|---|---|
+| `/display create <name: str> <cols: int> <rows: int> [broadcast: bool]`<br>`/display set <name: str> <source: str>`<br>`/display give <name: str> [start: int] [player: player]`<br>`/display broadcast <name: str>`<br>`/display delete <name: str>`<br>`/display list` | manage static map displays and announcements | `mapdisplay.command.manage` |
 
 ## Compatibility
 
